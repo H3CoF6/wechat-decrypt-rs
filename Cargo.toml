@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["H3CoF6"]
 description = "A lightweight and fast WeChat Database & Media Decryptor written in Rust"
 license = "MIT"
-repository = "https://github.com/H3CoF6/wx-dump-rs"
+repository = "https://github.com/H3CoF6/wechat-decrypt-rs"
 
 [dependencies]
 cliclack = "0.3"
@@ -37,10 +37,9 @@ features = [
     "Win32_System_Threading",
 ]
 
-# 开启性能巅峰模式
 [profile.release]
 opt-level = 3
-lto = "fat"         # 开启跨 Crate 链接期全优化
-codegen-units = 1   # 最大化优化收益，牺牲一点编译时间
-panic = "abort"     # 遇到 Panic 直接终止，减小体积
-strip = true        # 剔除符号表，缩小体积
+lto = "fat"       
+codegen-units = 1  
+panic = "abort"   
+strip = true  
