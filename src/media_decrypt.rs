@@ -24,7 +24,7 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
         let xor_key = (uid.parse::<u32>().unwrap_or(0) & 0xFF) as u8;
         let hash_input = format!("{}{}", uid, wxid);
         let hash_hex = format!("{:x}", Md5::digest(hash_input.as_bytes()));
-        let aes_key_v2 = hash_hex[0..16].as_bytes().to_vec();
+        let aes_key_v2 = hash_hex.as_bytes()[0..16].to_vec();
 
         keys_pool.push(MediaKeys {
             xor_key,
@@ -36,10 +36,10 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
     for entry in WalkDir::new(wxid_dir).into_iter().flatten() {
         if entry.file_type().is_file() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("dat") {
-                if !path.components().any(|c| c.as_os_str() == "db_storage") {
-                    dat_files.push(path);
-                }
+            if path.extension().and_then(|e| e.to_str()) == Some("dat")
+                && !path.components().any(|c| c.as_os_str() == "db_storage")
+            {
+                dat_files.push(path);
             }
         }
     }
