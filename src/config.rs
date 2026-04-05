@@ -5,7 +5,7 @@ use cipher::{AsyncStreamCipher, KeyIvInit};
 use console::{style, Emoji};
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 type Aes128Cfb = Decryptor<Aes128>;
 
@@ -95,10 +95,50 @@ pub fn find_user_unique_ids() -> Result<Vec<String>> {
     Ok(uids)
 }
 
+
+pub fn parse_global_config(root_path: &Path) -> Result<WeChatUserInfo> {
+    let config_path = root_path
+        .join("all_users")
+        .join("config")
+        .join("global_config");
+
+    if !config_path.exists() {
+        bail!("global_config file not found! ({:?})", config_path);
+    }
+
+    let full_data = fs::read(&config_path)?;
+    if full_data.len() <= 4 {
+        bail!("global_config file is corrupted or too small!");
+    }
+
+    // 解密逻辑
+    let encrypted_data = &full_data[4..];
+    // 直接用数组，更直观
+    let key = b"xwechat_crypt_ke"; // 取前16位
+    let iv = [0u8; 16];
+
+    let cipher = Aes128Cfb::new_from_slices(key, &iv)
+        .map_err(|e| anyhow::anyhow!("Failed to initialize decryptor: {}", e))?;
+
+    let mut decrypted = encrypted_data.to_vec();
+    cipher.decrypt(&mut decrypted);
+
+    // 字段提取
+    let wxid = extract_mmkv_string(&decrypted, "mmkv_key_user_name").unwrap_or_default();
+    let nickname = extract_mmkv_string(&decrypted, "mmkv_key_nick_name").unwrap_or_default();
+
+    if !wxid.is_empty() || !nickname.is_empty() {
+        Ok(WeChatUserInfo { wxid, nickname })
+    } else {
+        bail!("Decryption successful, but failed to identify valid user information.");
+    }
+}
+
 fn extract_mmkv_string(data: &[u8], key: &str) -> Option<String> {
     let key_bytes = key.as_bytes();
-    if let Some(pos) = memchr::memmem::find(data, key_bytes) {
+    memchr::memmem::find(data, key_bytes).and_then(|pos| {
         let mut offset = pos + key_bytes.len();
+
         while offset < data.len() && (data[offset] < 0x20 || data[offset] > 0x7E) {
             offset += 1;
         }
@@ -109,45 +149,9 @@ fn extract_mmkv_string(data: &[u8], key: &str) -> Option<String> {
         }
 
         if offset > start {
-            return String::from_utf8(data[start..offset].to_vec()).ok();
+            String::from_utf8(data[start..offset].to_vec()).ok()
+        } else {
+            None
         }
-    }
-    None
-}
-
-pub fn parse_global_config(root_path: &PathBuf) -> Result<WeChatUserInfo> {
-    let config_path = root_path
-        .join("all_users")
-        .join("config")
-        .join("global_config");
-    if !config_path.exists() {
-        bail!("global_config file not found! ({:?})", config_path);
-    }
-
-    let full_data = fs::read(&config_path)?;
-    if full_data.len() <= 4 {
-        bail!("global_config file is corrupted or too small!");
-    }
-
-    // Decryption logic
-    let encrypted_data = &full_data[4..];
-    let mut key = [0u8; 16];
-    key.copy_from_slice(&b"xwechat_crypt_key"[..16]);
-    let iv = [0u8; 16];
-
-    let cipher = Aes128Cfb::new_from_slices(&key, &iv)
-        .map_err(|e| anyhow::anyhow!("Failed to initialize decryptor: {}", e))?;
-
-    let mut decrypted = encrypted_data.to_vec();
-    cipher.decrypt(&mut decrypted);
-
-    // Field extraction
-    let wxid = extract_mmkv_string(&decrypted, "mmkv_key_user_name").unwrap_or_default();
-    let nickname = extract_mmkv_string(&decrypted, "mmkv_key_nick_name").unwrap_or_default();
-
-    if !wxid.is_empty() || !nickname.is_empty() {
-        Ok(WeChatUserInfo { wxid, nickname })
-    } else {
-        bail!("Decryption successful, but failed to identify valid user information.");
-    }
+    })
 }
