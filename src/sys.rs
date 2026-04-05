@@ -13,6 +13,12 @@ pub fn check_arch() -> Result<()> {
     Ok(())
 }
 
+/// Finds the Process ID (PID) of the running WeChat process.
+///
+/// # Safety
+///
+/// This function uses Windows Toolhelp32 snapshots to iterate through system processes.
+/// It is marked unsafe because it relies on FFI calls to the Windows API.
 pub unsafe fn find_wechat_pid() -> Result<u32> {
     let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
     let mut pe = PROCESSENTRY32W {

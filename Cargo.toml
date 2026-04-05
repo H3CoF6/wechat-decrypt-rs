@@ -7,6 +7,14 @@ description = "A lightweight and fast WeChat Database & Media Decryptor written 
 license = "MIT"
 repository = "https://github.com/H3CoF6/wechat-decrypt-rs"
 
+[lib]
+name = "wx_dump"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "wx-dump-rs"
+path = "src/main.rs"
+
 [dependencies]
 cliclack = "0.3"
 anyhow = "1.0"
@@ -26,6 +34,8 @@ sha2 = "0.10"
 pbkdf2 = "0.12"
 md-5 = "0.10"
 tabled = "0.15"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 
 [dependencies.windows]
 version = "0.52"

@@ -1,7 +1,4 @@
-mod config;
-mod db_decrypt;
-mod media_decrypt;
-mod sys;
+use wx_dump::{config, db_decrypt, media_decrypt, sys};
 
 use anyhow::Result;
 use cliclack::{intro, log, note, outro};
