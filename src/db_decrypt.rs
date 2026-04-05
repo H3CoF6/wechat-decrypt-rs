@@ -29,11 +29,12 @@ const HMAC_SIZE: usize = 64; // SHA-512
 const RESERVE_SIZE: usize = 80; // 16 (IV) + 64 (HMAC) = 80
 const MAX_REGION: usize = 256 * 1024 * 1024;
 
-#[derive(Debug, Clone)]
-struct DbInfo {
-    filepath: PathBuf,
-    name: String,
-    page1: Vec<u8>,
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DbInfo {
+    pub filepath: PathBuf,
+    pub name: String,
+    #[serde(skip)]
+    pub page1: Vec<u8>,
 }
 
 // --- Core Cryptography Logic ---
@@ -112,7 +113,7 @@ fn decrypt_db(input: &Path, output: &Path, raw_key: &[u8]) -> Result<()> {
 
 // --- Memory Scanning and Key Extraction ---
 
-fn collect_dbs(db_storage: &Path) -> HashMap<String, Vec<DbInfo>> {
+pub fn collect_dbs(db_storage: &Path) -> HashMap<String, Vec<DbInfo>> {
     let mut pa_map: HashMap<String, Vec<DbInfo>> = HashMap::new();
 
     for entry in WalkDir::new(db_storage).into_iter().flatten() {
@@ -140,7 +141,7 @@ fn collect_dbs(db_storage: &Path) -> HashMap<String, Vec<DbInfo>> {
     pa_map
 }
 
-unsafe fn scan_memory(
+pub unsafe fn scan_memory(
     pid: u32,
     db_map: &HashMap<String, Vec<DbInfo>>,
 ) -> Result<HashMap<String, Vec<u8>>> {

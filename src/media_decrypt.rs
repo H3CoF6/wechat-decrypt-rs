@@ -11,14 +11,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-struct MediaKeys {
-    xor_key: u8,
-    aes_key_v2: Vec<u8>,
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MediaKeys {
+    pub xor_key: u8,
+    pub aes_key_v2: Vec<u8>,
 }
 
-pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<()> {
-    log::step(format!("[*] {}", style("Building media key pool").bold()))?;
-
+pub fn calculate_media_keys(wxid: &str, uids: &[String]) -> Vec<MediaKeys> {
     let mut keys_pool = Vec::new();
     for uid in uids {
         let xor_key = (uid.parse::<u32>().unwrap_or(0) & 0xFF) as u8;
@@ -31,6 +30,13 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
             aes_key_v2,
         });
     }
+    keys_pool
+}
+
+pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<()> {
+    log::step(format!("[*] {}", style("Building media key pool").bold()))?;
+
+    let keys_pool = calculate_media_keys(wxid, uids);
 
     let mut dat_files = Vec::new();
     for entry in WalkDir::new(wxid_dir).into_iter().flatten() {
@@ -124,7 +130,7 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
 }
 
 // --- WeChat 4.x V1/V2 (Hybrid AES + XOR) Decryption ---
-fn decrypt_v1_v2(data: &[u8], aes_key: &[u8], xor_key: u8) -> Option<(Vec<u8>, &'static str)> {
+pub fn decrypt_v1_v2(data: &[u8], aes_key: &[u8], xor_key: u8) -> Option<(Vec<u8>, &'static str)> {
     if data.len() < 16 {
         return None;
     }
@@ -176,7 +182,7 @@ fn decrypt_v1_v2(data: &[u8], aes_key: &[u8], xor_key: u8) -> Option<(Vec<u8>, &
 }
 
 // --- WeChat V3 (XOR Only) Decryption & Magic Sniffing ---
-fn try_decrypt_v3(data: &[u8], uid_xor_key: u8) -> Option<(Vec<u8>, &'static str)> {
+pub fn try_decrypt_v3(data: &[u8], uid_xor_key: u8) -> Option<(Vec<u8>, &'static str)> {
     if data.is_empty() {
         return None;
     }
@@ -228,7 +234,7 @@ fn try_decrypt_v3(data: &[u8], uid_xor_key: u8) -> Option<(Vec<u8>, &'static str
     None
 }
 
-fn check_magic_plain(data: &[u8]) -> Option<&'static str> {
+pub fn check_magic_plain(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(b"\xFF\xD8\xFF") {
         Some("jpg")
     } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {

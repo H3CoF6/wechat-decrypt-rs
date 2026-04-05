@@ -33,3 +33,40 @@
 程序启动后，会自动完成环境探测、PID 锁定、数据目录定位以及高并发解密。
 
 解密后的数据库文件与多媒体资源将按类目输出到当前运行目录下的 `output/<wxid>/` 文件夹中。
+
+## 获取与构建
+
+### 1. 下载预编译版本
+您可以前往项目的 [Releases 页面](https://github.com/H3CoF6/wechat-decrypt-rs/releases) 下载由 GitHub Actions 自动构建的最新版本。压缩包内包含了：
+- `wx-dump-rs.exe`：独立的命令行工具，双击即可使用。
+- `wx_dump.dll`：动态链接库，供外部程序调用。
+
+### 2. 源码编译构建
+确保您已安装最新的 [Rust 工具链 (rustup)](https://rustup.rs/)，然后执行：
+
+```powershell
+# 1. 克隆代码仓库
+git clone https://github.com/H3CoF6/wechat-decrypt-rs.git
+cd wechat-decrypt-rs
+
+# 2. 编译 Release 版本（同时生成 CLI 和 DLL）
+cargo build --release
+```
+
+编译完成后，您可以在 `target/release/` 目录下找到：
+- CLI 工具: `target/release/wx-dump-rs.exe`
+- 动态链接库: `target/release/wx_dump.dll`
+
+## 作为 DLL 外部调用 (供第三方开发)
+
+本工具不仅仅是一个 CLI，**还可以作为 DLL 被其他语言（如 Python, C#, C++）加载和调用**，从而提供了一套完整的微信数据导出“一条龙”底层 API：
+
+- `get_wechat_state()`: 自动扫描微信 PID，读取本地登录账户的 `wxid` 及配置目录。
+- `get_db_keys(...)`: 扫描内存获取所有数据库的解密盐值 (salt) 和密钥 (key)。
+- `get_image_keys()`: 无需任何输入参数，自动计算当前登录账号可能的所有图片 `.dat` 文件解密组合 (AES + XOR)。
+- `batch_decrypt_images(...)`: 传入提取出的密钥，极速并发解密图片目录。
+
+以上接口统一采用 JSON 字符串传递参数和返回值，适配门槛极低。
+详细的 API 接口说明和 Python 调用示例，请参阅：
+- [DLL API 文档](./doc/api.md)
+- [Python 调用示例](./doc/example.py)

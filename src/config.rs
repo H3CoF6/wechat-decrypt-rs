@@ -9,10 +9,24 @@ use std::path::{Path, PathBuf};
 
 type Aes128Cfb = Decryptor<Aes128>;
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct WeChatUserInfo {
     pub wxid: String,
     pub nickname: String,
+}
+
+pub fn find_wechat_data_dir_auto() -> Result<PathBuf> {
+    let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string());
+    let candidates = vec![
+        PathBuf::from(&home).join("Documents").join("xwechat_files"),
+        PathBuf::from(&home).join("xwechat_files"),
+    ];
+    for path in candidates {
+        if path.exists() && path.is_dir() {
+            return Ok(path);
+        }
+    }
+    bail!("Automatic detection of WeChat data directory failed.");
 }
 
 pub fn find_wechat_data_dir() -> Result<PathBuf> {

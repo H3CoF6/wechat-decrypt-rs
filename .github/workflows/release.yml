@@ -32,8 +32,9 @@ jobs:
       run: |
         mkdir -p dist
         cp target/x86_64-pc-windows-msvc/release/wx-dump-rs.exe dist/
+        cp target/x86_64-pc-windows-msvc/release/wx_dump.dll dist/
         cd dist
-        7z a ../wx-dump-rs-${{ github.ref_name }}-windows-x64.zip wx-dump-rs.exe
+        7z a ../wx-dump-rs-${{ github.ref_name }}-windows-x64.zip wx-dump-rs.exe wx_dump.dll
     
     - name: Create Release
       uses: softprops/action-gh-release@v2
