@@ -190,7 +190,8 @@ pub extern "C" fn batch_decrypt_images(
             return;
         }
 
-        let mut decrypted: Option<(Vec<u8>, &'static str)> = None;
+        let decrypted: Option<(Vec<u8>, &'static str)>;
+
         if data.starts_with(b"\x07\x08V1\x08\x07") {
             decrypted = media_decrypt::decrypt_v1_v2(&data, aes_key_v1, xor_key);
         } else if data.starts_with(b"\x07\x08V2\x08\x07") {
@@ -220,11 +221,15 @@ pub extern "C" fn batch_decrypt_images(
 }
 
 #[no_mangle]
-pub extern "C" fn free_string(ptr: *mut c_char) {
+/// Frees a string allocated by Rust and passed to C.
+///
+/// # Safety
+///
+/// The caller must ensure that the pointer was originally created by `CString::into_raw`
+/// and has not been freed yet.
+pub unsafe extern "C" fn free_string(ptr: *mut c_char) {
     if ptr.is_null() {
         return;
     }
-    unsafe {
-        let _ = CString::from_raw(ptr);
-    }
+    let _ = CString::from_raw(ptr);
 }

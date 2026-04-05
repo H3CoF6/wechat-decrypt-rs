@@ -3,13 +3,12 @@ import json
 import os
 import sys
 
-# 根据平台自动选择 DLL 后缀
+dll_name = ""
+
 if sys.platform == 'win32':
     dll_name = "wx_dump.dll"
-elif sys.platform == 'darwin':
-    dll_name = "libwx_dump.dylib"
 else:
-    dll_name = "libwx_dump.so"
+    sys.exit(1)
 
 # 如果你在 target/release 目录下编译了项目，请调整相对路径
 dll_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "target", "release", dll_name))
@@ -18,10 +17,10 @@ if not os.path.exists(dll_path):
     print(f"找不到 DLL: {dll_path}，请先运行 `cargo build --release`")
     sys.exit(1)
 
-# 加载 DLL
+
 wx_dump = ctypes.CDLL(dll_path)
 
-# 配置函数签名
+
 wx_dump.get_wechat_state.restype = ctypes.c_void_p
 wx_dump.get_db_keys.restype = ctypes.c_void_p
 wx_dump.get_db_keys.argtypes = [ctypes.c_uint32, ctypes.c_char_p]
@@ -56,9 +55,9 @@ def main():
     pid = state["pid"]
     data_dir = state["data_dir"]
     wxid = state["wxid"]
-    
-    # 构建数据库路径，一般在 data_dir/wxid/Msg 里面（请根据实际需要调整扫描的文件夹层级）
-    db_storage_dir = os.path.join(data_dir, wxid, "Msg")
+
+    ##  注意！！！！  这里的传入路径是错的，需要根据实际情况自行修改    ！！！！！！！ todo
+    db_storage_dir = os.path.join(data_dir, wxid, "db_storage")
 
     print(f"\n=== 2. 获取数据库密钥 (扫描 {db_storage_dir}) ===")
     # 这一步可能会比较慢，因为需要扫描内存

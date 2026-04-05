@@ -141,6 +141,13 @@ pub fn collect_dbs(db_storage: &Path) -> HashMap<String, Vec<DbInfo>> {
     pa_map
 }
 
+/// Scans the memory of a process to find database decryption keys.
+///
+/// # Safety
+///
+/// This function is unsafe because it performs raw memory reading from another process
+/// using Windows APIs. The caller must ensure that the provided `pid` is valid and
+/// that the process has not been terminated during the scan.
 pub unsafe fn scan_memory(
     pid: u32,
     db_map: &HashMap<String, Vec<DbInfo>>,
