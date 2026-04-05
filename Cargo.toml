@@ -1,0 +1,46 @@
+[package]
+name = "wx-dump-rs"
+version = "1.0.0"
+edition = "2021"
+authors = ["H3CoF6"]
+description = "A lightweight and fast WeChat Database & Media Decryptor written in Rust"
+license = "MIT"
+repository = "https://github.com/H3CoF6/wx-dump-rs"
+
+[dependencies]
+cliclack = "0.3"
+anyhow = "1.0"
+console = "0.15"
+indicatif = "0.17"
+rayon = "1.8"
+jwalk = "0.8"
+hex = "0.4"
+memchr = "2.7"
+aes = "0.8"
+cbc = "0.1"
+cfb-mode = "0.8"
+cipher = "0.4"
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+pbkdf2 = "0.12"
+md-5 = "0.10"
+tabled = "0.15"
+
+[dependencies.windows]
+version = "0.52"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+]
+
+# 开启性能巅峰模式
+[profile.release]
+opt-level = 3
+lto = "fat"         # 开启跨 Crate 链接期全优化
+codegen-units = 1   # 最大化优化收益，牺牲一点编译时间
+panic = "abort"     # 遇到 Panic 直接终止，减小体积
+strip = true        # 剔除符号表，缩小体积
