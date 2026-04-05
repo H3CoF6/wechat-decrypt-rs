@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build for Windows
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc
+    
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+    
+    - name: Build Release
+      run: cargo build --release --target x86_64-pc-windows-msvc
+    
+    - name: Package
+      shell: bash
+      run: |
+        mkdir -p dist
+        cp target/x86_64-pc-windows-msvc/release/wx-dump-rs.exe dist/
+        cd dist
+        7z a ../wx-dump-rs-${{ github.ref_name }}-windows-x64.zip wx-dump-rs.exe
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: wx-dump-rs-*.zip
+        body: |
+          ## 📦 Release ${{ github.ref_name }}
+          
+          Automated release for **wx-dump-rs**.
+          
+          ### 🛠 Changes
+          - Build from commit: `${{ github.sha }}`
+          - Architecture: `x86_64-pc-windows-msvc`
+          
+          ### 📥 Download
+          Check assets below for the compiled binary.
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
