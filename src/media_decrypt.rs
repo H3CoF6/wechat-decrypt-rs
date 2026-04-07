@@ -42,10 +42,25 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
     for entry in WalkDir::new(wxid_dir).into_iter().flatten() {
         if entry.file_type().is_file() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("dat")
-                && !path.components().any(|c| c.as_os_str() == "db_storage")
-            {
-                dat_files.push(path);
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+            // --- 修改后的过滤逻辑 ---
+            // 兼容格式 1: hash(32位)_xxxxx.dat (长度 >= 38)
+            // 兼容格式 2: hash(32位).dat (长度 == 36)
+            if name.ends_with(".dat") && name.len() >= 36 {
+                let hash_part = &name[0..32];
+                let is_hex = hash_part.chars().all(|c| c.is_ascii_hexdigit());
+
+                let is_valid_format = if name.len() == 36 {
+                    true // 纯 hash.dat
+                } else {
+                    // 检查第33位是否为下划线: hash_...
+                    name.as_bytes().get(32) == Some(&b'_')
+                };
+
+                if is_hex && is_valid_format && !path.components().any(|c| c.as_os_str() == "db_storage") {
+                    dat_files.push(path.to_path_buf());
+                }
             }
         }
     }
@@ -66,8 +81,8 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
         style("Starting parallel media decryption").bold()
     ))?;
 
-    let out_dir = PathBuf::from("output").join(wxid).join("media");
-    fs::create_dir_all(&out_dir)?;
+    let out_base = PathBuf::from("output").join(wxid).join("resource");
+    fs::create_dir_all(&out_base)?;
 
     let pb = ProgressBar::new(total as u64);
     pb.set_style(
@@ -80,6 +95,10 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
     let aes_key_v1 = b"cfcd208495d565ef"; // Static AES key for V1 format
 
     dat_files.par_iter().for_each(|path| {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let hash = &name[0..32];
+        let hash_prefix = &hash[0..2];
+
         let data = fs::read(path).unwrap_or_default();
         if data.is_empty() {
             pb.inc(1);
@@ -102,9 +121,10 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
         }
 
         if let Some((dec, ext)) = decrypted {
-            let stem = path.file_stem().unwrap().to_string_lossy();
-            let out_name = format!("{}.{}", stem, ext);
-            let out_file = out_dir.join(&out_name);
+            let target_dir = out_base.join(hash_prefix);
+            let _ = fs::create_dir_all(&target_dir);
+            // 这里 ext 如果是 "wxgf"，则输出 hash.wxgf
+            let out_file = target_dir.join(format!("{}.{}", hash, ext));
             if fs::write(&out_file, dec).is_ok() {
                 success_count.fetch_add(1, Ordering::Relaxed);
             }
@@ -123,7 +143,7 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
     ))?;
     log::step(format!(
         "   Output path: {}",
-        style(out_dir.display()).magenta()
+        style(out_base.display()).magenta()
     ))?;
 
     Ok(())
@@ -187,46 +207,19 @@ pub fn try_decrypt_v3(data: &[u8], uid_xor_key: u8) -> Option<(Vec<u8>, &'static
         return None;
     }
 
-    let magics = [
-        (b"\xFF\xD8\xFF".as_slice(), "jpg"),
-        (b"\x89PNG\r\n\x1a\n".as_slice(), "png"),
-        (b"GIF89a".as_slice(), "gif"),
-        (b"GIF87a".as_slice(), "gif"),
-        (b"RIFF".as_slice(), "webp"),
-        (b"wxgf".as_slice(), "dat"),
-        (b"\x00\x00\x00\x1cftyp".as_slice(), "mp4"),
-        (b"\x00\x00\x00\x18ftyp".as_slice(), "mp4"),
-        (b"\x00\x00\x00\x20ftyp".as_slice(), "mp4"),
-    ];
-
-    let first_byte = data[0] ^ uid_xor_key;
-    for (magic, ext) in &magics {
-        if first_byte == magic[0] {
-            let mut ok = true;
-            for i in 1..magic.len().min(data.len()) {
-                if data[i] ^ uid_xor_key != magic[i] {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok {
-                let dec = data.iter().map(|&b| b ^ uid_xor_key).collect();
-                return Some((dec, ext));
-            }
-        }
+    // 1. Try with uid_xor_key
+    if let Some(ext) = check_xor_with_key(data, uid_xor_key) {
+        let dec = data.iter().map(|&b| b ^ uid_xor_key).collect();
+        return Some((dec, ext));
     }
 
-    for (magic, ext) in &magics {
-        let guessed_key = data[0] ^ magic[0];
-        let mut ok = true;
-        for i in 1..magic.len().min(data.len()) {
-            if data[i] ^ guessed_key != magic[i] {
-                ok = false;
-                break;
-            }
+    // 2. Try all possible keys (brute force)
+    for key in 0..=255 {
+        if key == uid_xor_key {
+            continue;
         }
-        if ok {
-            let dec = data.iter().map(|&b| b ^ guessed_key).collect();
+        if let Some(ext) = check_xor_with_key(data, key) {
+            let dec = data.iter().map(|&b| b ^ key).collect();
             return Some((dec, ext));
         }
     }
@@ -234,18 +227,19 @@ pub fn try_decrypt_v3(data: &[u8], uid_xor_key: u8) -> Option<(Vec<u8>, &'static
     None
 }
 
-pub fn check_magic_plain(data: &[u8]) -> Option<&'static str> {
-    if data.starts_with(b"\xFF\xD8\xFF") {
-        Some("jpg")
-    } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("png")
-    } else if data.starts_with(b"GIF8") {
-        Some("gif")
-    } else if data.starts_with(b"RIFF") && data.len() >= 12 && &data[8..12] == b"WEBP" {
-        Some("webp")
-    } else if data.len() >= 8 && &data[4..8] == b"ftyp" {
-        Some("mp4")
-    } else {
-        Some("wxgf")
+fn check_xor_with_key(data: &[u8], key: u8) -> Option<&'static str> {
+    let mut prefix = [0u8; 32];
+    let len = data.len().min(32);
+    for i in 0..len {
+        prefix[i] = data[i] ^ key;
     }
+    check_magic_plain(&prefix[..len])
+}
+
+pub fn check_magic_plain(data: &[u8]) -> Option<&'static str> {
+    // 优先匹配 wxgf
+    if data.starts_with(b"wxgf") {
+        return Some("wxgf");
+    }
+    infer::get(data).map(|kind| kind.extension())
 }
