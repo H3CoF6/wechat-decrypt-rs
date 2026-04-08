@@ -175,8 +175,17 @@ pub fn decrypt_v1_v2(data: &[u8], aes_key: &[u8], xor_key: u8) -> Option<(Vec<u8
     }
 
     if let Some(&pad_len) = buf.last() {
-        if pad_len > 0 && pad_len <= 16 {
-            buf.truncate(buf.len() - pad_len as usize);
+        let pad_usize = pad_len as usize;
+        if pad_usize > 0 && pad_usize <= 16 && buf.len() >= pad_usize {
+            let is_valid_padding = buf[buf.len() - pad_usize..]
+                .iter()
+                .all(|&b| b == pad_len);
+
+            if is_valid_padding {
+                buf.truncate(buf.len() - pad_usize);
+            } else {
+                log::info("Invalid padding detected, skipping truncate.").unwrap();
+            }
         }
     }
 
