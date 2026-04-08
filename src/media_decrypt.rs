@@ -8,13 +8,29 @@ use jwalk::WalkDir;
 use md5::{Digest, Md5};
 use rayon::prelude::*;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MediaKeys {
     pub xor_key: u8,
     pub aes_key_v2: Vec<u8>,
+}
+
+// 增加枚举：区分资源类型，用于分类输出
+#[derive(Debug)]
+pub enum MediaType {
+    Resource, // 聊天界面的 .dat
+    Sns,      // 朋友圈缓存图片
+}
+
+// 增加结构体：统一管理解密任务属性
+#[derive(Debug)]
+pub struct MediaTask {
+    pub path: PathBuf,
+    pub hash: String,
+    pub hash_prefix: String,
+    pub media_type: MediaType,
 }
 
 pub fn calculate_media_keys(wxid: &str, uids: &[String]) -> Vec<MediaKeys> {
@@ -33,17 +49,21 @@ pub fn calculate_media_keys(wxid: &str, uids: &[String]) -> Vec<MediaKeys> {
     keys_pool
 }
 
-pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<()> {
-    log::step(format!("[*] {}", style("Building media key pool").bold()))?;
-
-    let keys_pool = calculate_media_keys(wxid, uids);
-
-    let mut dat_files = Vec::new();
-    for entry in WalkDir::new(wxid_dir).into_iter().flatten() {
+// 核心修改：独立的媒体文件扫描逻辑，支持 .dat 和 Sns 缓存
+pub fn scan_media_files(dir: &Path) -> Vec<MediaTask> {
+    let mut tasks = Vec::new();
+    for entry in WalkDir::new(dir).into_iter().flatten() {
         if entry.file_type().is_file() {
             let path = entry.path();
+
+            // 跳过 db_storage 目录，避免扫描无关文件
+            if path.components().any(|c| c.as_os_str() == "db_storage") {
+                continue;
+            }
+
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
+            // 1. 识别聊天图片资源 (.dat 且长度 >= 36)
             if name.ends_with(".dat") && name.len() >= 36 {
                 let hash_part = &name[0..32];
                 let is_hex = hash_part.chars().all(|c| c.is_ascii_hexdigit());
@@ -55,16 +75,58 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
                     name.as_bytes().get(32) == Some(&b'_')
                 };
 
-                if is_hex && is_valid_format && !path.components().any(|c| c.as_os_str() == "db_storage") {
-                    dat_files.push(path.to_path_buf());
+                if is_hex && is_valid_format {
+                    tasks.push(MediaTask {
+                        path: path.to_path_buf(),
+                        hash: hash_part.to_string(),
+                        hash_prefix: hash_part[0..2].to_string(),
+                        media_type: MediaType::Resource,
+                    });
+                    continue; // 匹配成功，跳过下方检查
+                }
+            }
+
+            // 2. 识别朋友圈缓存 (Sns) 图片资源
+            // 路径特征：.../Sns/Img/XX/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+            let parent = path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+
+            if name.len() == 30 && parent.len() == 2 {
+                let is_name_hex = name.chars().all(|c| c.is_ascii_hexdigit());
+                let is_parent_hex = parent.chars().all(|c| c.is_ascii_hexdigit());
+
+                if is_name_hex && is_parent_hex {
+                    // 确保处于 sns 和 img 的目录下 (忽略大小写以防不同系统差异)
+                    let has_sns = path.components().any(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("sns"));
+                    let has_img = path.components().any(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("img"));
+
+                    if has_sns && has_img {
+                        // 完整 hash 是 父级目录2位 + 文件名30位
+                        let full_hash = format!("{}{}", parent, name);
+                        tasks.push(MediaTask {
+                            path: path.to_path_buf(),
+                            hash: full_hash,
+                            hash_prefix: parent.to_string(),
+                            media_type: MediaType::Sns,
+                        });
+                    }
                 }
             }
         }
     }
+    tasks
+}
 
-    let total = dat_files.len();
+pub fn decrypt_media(wxid_dir: &Path, wxid: &str, uids: &[String]) -> Result<()> {
+    log::step(format!("[*] {}", style("Building media key pool").bold()))?;
+
+    let keys_pool = calculate_media_keys(wxid, uids);
+
+    // 调用新的扫描器提取所有任务
+    let tasks = scan_media_files(wxid_dir);
+    let total = tasks.len();
+
     log::step(format!(
-        "   Scan complete, found {} .dat encrypted resources.",
+        "   Scan complete, found {} encrypted resources (Chat/Sns).",
         style(total).cyan()
     ))?;
 
@@ -78,8 +140,13 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
         style("Starting parallel media decryption").bold()
     ))?;
 
-    let out_base = PathBuf::from("output").join(wxid).join("resource");
-    fs::create_dir_all(&out_base)?;
+    // 创建两种类型对应的输出目录
+    let out_base = PathBuf::from("output").join(wxid);
+    let out_resource = out_base.join("resource");
+    let out_sns = out_base.join("Sns");
+
+    fs::create_dir_all(&out_resource)?;
+    fs::create_dir_all(&out_sns)?;
 
     let pb = ProgressBar::new(total as u64);
     pb.set_style(
@@ -91,12 +158,8 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
     let success_count = AtomicUsize::new(0);
     let aes_key_v1 = b"cfcd208495d565ef"; // Static AES key for V1 format
 
-    dat_files.par_iter().for_each(|path| {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let hash = &name[0..32];
-        let hash_prefix = &hash[0..2];
-
-        let data = fs::read(path).unwrap_or_default();
+    tasks.par_iter().for_each(|task| {
+        let data = fs::read(&task.path).unwrap_or_default();
         if data.is_empty() {
             pb.inc(1);
             return;
@@ -118,10 +181,18 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
         }
 
         if let Some((dec, ext)) = decrypted {
-            let target_dir = out_base.join(hash_prefix);
+            // 根据媒体类型判断存放位置
+            let base_dir = match task.media_type {
+                MediaType::Resource => &out_resource,
+                MediaType::Sns => &out_sns,
+            };
+
+            // 按 hash_prefix 创建前缀目录 (如 /Sns/2b/)
+            let target_dir = base_dir.join(&task.hash_prefix);
             let _ = fs::create_dir_all(&target_dir);
-            // 这里 ext 如果是 "wxgf"，则输出 hash.wxgf
-            let out_file = target_dir.join(format!("{}.{}", hash, ext));
+
+            // 组装最终文件名
+            let out_file = target_dir.join(format!("{}.{}", task.hash, ext));
             if fs::write(&out_file, dec).is_ok() {
                 success_count.fetch_add(1, Ordering::Relaxed);
             }
@@ -184,7 +255,7 @@ pub fn decrypt_v1_v2(data: &[u8], aes_key: &[u8], xor_key: u8) -> Option<(Vec<u8
             if is_valid_padding {
                 buf.truncate(buf.len() - pad_usize);
             } else {
-                log::info("Invalid padding detected, skipping truncate.").unwrap();
+                // log::info("Invalid padding detected, skipping truncate.").unwrap();
             }
         }
     }

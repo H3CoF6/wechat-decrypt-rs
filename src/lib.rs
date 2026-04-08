@@ -166,26 +166,15 @@ pub extern "C" fn batch_decrypt_images(
         );
     }
 
-    use jwalk::WalkDir;
-    let mut dat_files = Vec::new();
-    for entry in WalkDir::new(&in_path).into_iter().flatten() {
-        if entry.file_type().is_file() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("dat")
-                && !path.components().any(|c| c.as_os_str() == "db_storage")
-            {
-                dat_files.push(path);
-            }
-        }
-    }
+    let tasks = media_decrypt::scan_media_files(&in_path);
 
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     let success_count = AtomicUsize::new(0);
     let aes_key_v1 = b"cfcd208495d565ef";
 
-    dat_files.par_iter().for_each(|path| {
-        let data = std::fs::read(path).unwrap_or_default();
+    tasks.par_iter().for_each(|task| {
+        let data = std::fs::read(&task.path).unwrap_or_default();
         if data.is_empty() {
             return;
         }
@@ -201,8 +190,7 @@ pub extern "C" fn batch_decrypt_images(
         }
 
         if let Some((dec, ext)) = decrypted {
-            let stem = path.file_stem().unwrap().to_string_lossy();
-            let out_name = format!("{}.{}", stem, ext);
+            let out_name = format!("{}.{}", task.hash, ext);
             let out_file = out_path.join(&out_name);
             if std::fs::write(&out_file, dec).is_ok() {
                 success_count.fetch_add(1, Ordering::Relaxed);
@@ -213,10 +201,10 @@ pub extern "C" fn batch_decrypt_images(
     let sc = success_count.load(Ordering::Relaxed);
     string_to_ptr(
         json!({
-            "total": dat_files.len(),
+            "total": tasks.len(),
             "success": sc,
         })
-        .to_string(),
+            .to_string(),
     )
 }
 
