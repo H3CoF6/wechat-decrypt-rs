@@ -171,15 +171,14 @@ fn extract_mmkv_string(data: &[u8], key: &str) -> Option<String> {
         let mut end = start;
         while end < data.len() {
             let b = data[end];
-            if b < 0x20 || b > 0x7E {
+            if !(0x20..=0x7E).contains(&b) {
                 break;
             }
 
             end += 1;
-            if end >= start + 2 {
-                if &data[end - 2..end] == b"/0" {
-                    break;
-                }
+            if end >= start + 2
+                && &data[end - 2..end] == b"/0" {
+                break;
             }
         }
 

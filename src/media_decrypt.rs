@@ -44,9 +44,6 @@ pub fn decrypt_media(wxid_dir: &PathBuf, wxid: &str, uids: &[String]) -> Result<
             let path = entry.path();
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-            // --- 修改后的过滤逻辑 ---
-            // 兼容格式 1: hash(32位)_xxxxx.dat (长度 >= 38)
-            // 兼容格式 2: hash(32位).dat (长度 == 36)
             if name.ends_with(".dat") && name.len() >= 36 {
                 let hash_part = &name[0..32];
                 let is_hex = hash_part.chars().all(|c| c.is_ascii_hexdigit());

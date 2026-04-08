@@ -291,7 +291,7 @@ pub fn dump_and_decrypt(pid: u32, db_storage: &Path, wxid: &str) -> Result<()> {
         style("Starting parallel database decryption").bold()
     ))?;
 
-    let out_dir = PathBuf::from("output").join(wxid).join("database");
+    let out_dir = PathBuf::from("output").join(wxid).join("databases");
     fs::create_dir_all(&out_dir)?;
 
     let pb = ProgressBar::new(total_dbs as u64);
