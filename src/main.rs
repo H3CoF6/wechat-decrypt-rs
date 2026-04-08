@@ -64,7 +64,7 @@ fn main() -> Result<()> {
     let uids = config::find_user_unique_ids()?;
     let user_info = config::parse_global_config(&data_dir)?;
     let wxid = user_info.wxid;
-    let nickname = user_info.nickname;
+    // let nickname = user_info.nickname;
 
     let mut wxid_dir = None;
     for entry in std::fs::read_dir(&data_dir)? {
@@ -87,6 +87,28 @@ fn main() -> Result<()> {
     }
 
     let uids_str = uids.join(", ");
+    let user_info = config::parse_global_config(&data_dir)?;
+    let wxid = user_info.wxid.clone();
+    let nickname = user_info.nickname.clone();
+    let avatar_url = user_info.avatar_url.clone();
+
+    let output_dir = std::env::current_dir()?.join("output").join(&wxid);
+    if !output_dir.exists() {
+        std::fs::create_dir_all(&output_dir)?;
+    }
+
+    let account_json_path = output_dir.join("account.json");
+    let account_data = serde_json::json!({
+        "nick": nickname,
+        "username": wxid,
+        "avatar_url": avatar_url
+    });
+
+    std::fs::write(
+        &account_json_path,
+        serde_json::to_string_pretty(&account_data)?
+    )?;
+    log::step(style(format!("Account info saved to {:?}", account_json_path)).green())?;
 
     let data = vec![
         EnvSummary {

@@ -13,6 +13,7 @@ type Aes128Cfb = Decryptor<Aes128>;
 pub struct WeChatUserInfo {
     pub wxid: String,
     pub nickname: String,
+    pub avatar_url: String,
 }
 
 pub fn find_wechat_data_dir_auto() -> Result<PathBuf> {
@@ -125,9 +126,7 @@ pub fn parse_global_config(root_path: &Path) -> Result<WeChatUserInfo> {
         bail!("global_config file is corrupted or too small!");
     }
 
-    // 解密逻辑
     let encrypted_data = &full_data[4..];
-    // 直接用数组，更直观
     let key = b"xwechat_crypt_ke"; // 取前16位
     let iv = [0u8; 16];
 
@@ -136,13 +135,24 @@ pub fn parse_global_config(root_path: &Path) -> Result<WeChatUserInfo> {
 
     let mut decrypted = encrypted_data.to_vec();
     cipher.decrypt(&mut decrypted);
-
-    // 字段提取
     let wxid = extract_mmkv_string(&decrypted, "mmkv_key_user_name").unwrap_or_default();
     let nickname = extract_mmkv_string(&decrypted, "mmkv_key_nick_name").unwrap_or_default();
+    let mut avatar_url = extract_mmkv_string(&decrypted, "mmkv_key_head_img_url").unwrap_or_default();
+
+    if avatar_url.is_empty() {
+        if let Some(http_idx) = decrypted.windows(4).position(|w| w == b"http") {
+
+            if let Some(slash_zero_pos) = decrypted[http_idx..].windows(2).position(|w| w == b"/0") {
+                let end_idx = http_idx + slash_zero_pos + 2;
+                if let Ok(url) = String::from_utf8(decrypted[http_idx..end_idx].to_vec()) {
+                    avatar_url = url;
+                }
+            }
+        }
+    }
 
     if !wxid.is_empty() || !nickname.is_empty() {
-        Ok(WeChatUserInfo { wxid, nickname })
+        Ok(WeChatUserInfo { wxid, nickname, avatar_url })
     } else {
         bail!("Decryption successful, but failed to identify valid user information.");
     }
@@ -158,12 +168,23 @@ fn extract_mmkv_string(data: &[u8], key: &str) -> Option<String> {
         }
 
         let start = offset;
-        while offset < data.len() && data[offset] >= 0x20 && data[offset] <= 0x7E {
-            offset += 1;
+        let mut end = start;
+        while end < data.len() {
+            let b = data[end];
+            if b < 0x20 || b > 0x7E {
+                break;
+            }
+
+            end += 1;
+            if end >= start + 2 {
+                if &data[end - 2..end] == b"/0" {
+                    break;
+                }
+            }
         }
 
-        if offset > start {
-            String::from_utf8(data[start..offset].to_vec()).ok()
+        if end > start {
+            String::from_utf8(data[start..end].to_vec()).ok()
         } else {
             None
         }
