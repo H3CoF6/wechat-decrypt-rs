@@ -49,7 +49,6 @@ pub fn calculate_media_keys(wxid: &str, uids: &[String]) -> Vec<MediaKeys> {
     keys_pool
 }
 
-// 核心修改：独立的媒体文件扫描逻辑，支持 .dat 和 Sns 缓存
 pub fn scan_media_files(dir: &Path) -> Vec<MediaTask> {
     let mut tasks = Vec::new();
     for entry in WalkDir::new(dir).into_iter().flatten() {
@@ -217,7 +216,6 @@ pub fn decrypt_media(wxid_dir: &Path, wxid: &str, uids: &[String]) -> Result<()>
     Ok(())
 }
 
-// --- WeChat 4.x V1/V2 (Hybrid AES + XOR) Decryption ---
 pub fn decrypt_v1_v2(data: &[u8], aes_key: &[u8], xor_key: u8) -> Option<(Vec<u8>, &'static str)> {
     if data.len() < 16 {
         return None;
@@ -228,11 +226,7 @@ pub fn decrypt_v1_v2(data: &[u8], aes_key: &[u8], xor_key: u8) -> Option<(Vec<u8
     let rest = &data[15..];
 
     let remainder = aes_size_raw % 16;
-    let aes_size = if remainder == 0 {
-        aes_size_raw
-    } else {
-        aes_size_raw + 16 - remainder
-    };
+    let aes_size = aes_size_raw + 16 - remainder;
 
     if rest.len() < aes_size {
         return None;
@@ -274,7 +268,7 @@ pub fn decrypt_v1_v2(data: &[u8], aes_key: &[u8], xor_key: u8) -> Option<(Vec<u8
     out.extend_from_slice(raw_data);
     out.extend(xor_data.iter().map(|&b| b ^ xor_key));
 
-    let ext = check_magic_plain(&out).unwrap_or("dat");
+    let ext = check_magic_plain(&out)?;
     Some((out, ext))
 }
 
