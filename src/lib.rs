@@ -7,9 +7,14 @@ use serde_json::json;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::path::PathBuf;
+use std::collections::HashMap;
 
 fn string_to_ptr(s: String) -> *mut c_char {
     CString::new(s).unwrap().into_raw()
+}
+
+pub struct WxDbContext {
+    pub db_map: HashMap<String, (PathBuf, String, String)>,
 }
 
 fn ptr_to_string(ptr: *const c_char) -> Option<String> {
@@ -206,6 +211,177 @@ pub extern "C" fn batch_decrypt_images(
         })
             .to_string(),
     )
+}
+#[no_mangle]
+pub extern "C" fn init_db_context(pid: u32, db_dir: *const c_char) -> *mut WxDbContext {
+    let dir_str = match ptr_to_string(db_dir) {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+
+    let path = PathBuf::from(dir_str);
+    let db_map = db_decrypt::collect_dbs(&path);
+    if db_map.is_empty() {
+        return std::ptr::null_mut();
+    }
+
+    let results = match unsafe { db_decrypt::scan_memory(pid, &db_map) } {
+        Ok(res) => res,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let mut context = WxDbContext {
+        db_map: HashMap::new(),
+    };
+
+    // 构建上下文映射关系
+    for (salt, raw_key) in results {
+        if let Some(infos) = db_map.get(&salt) {
+            let key_hex = hex::encode(&raw_key).to_lowercase();
+            for info in infos {
+                context.db_map.insert(
+                    info.name.clone(), // e.g. "Msg0.db"
+                    (info.filepath.clone(), key_hex.clone(), salt.clone()),
+                );
+            }
+        }
+    }
+
+    Box::into_raw(Box::new(context))
+}
+
+#[no_mangle]
+/// Frees a string allocated by Rust and passed to C.
+///
+/// # Safety
+///
+/// The caller must ensure that the pointer was originally created by `CString::into_raw`
+/// and has not been freed yet.
+pub unsafe extern "C" fn free_db_context(ptr: *mut WxDbContext) {
+    if !ptr.is_null() {
+        let _ = Box::from_raw(ptr);
+    }
+}
+
+#[no_mangle]
+/// Frees a string allocated by Rust and passed to C.
+///
+/// # Safety
+///
+/// The caller must ensure that the pointer was originally created by `CString::into_raw`
+/// and has not been freed yet.
+pub unsafe extern "C" fn exec_sql(
+    ctx: *mut WxDbContext,
+    db_name: *const c_char,
+    sql: *const c_char,
+) -> *mut c_char {
+    if ctx.is_null() {
+        return string_to_ptr(json!({"error": "Context pointer is null"}).to_string());
+    }
+
+    let db_name_str = match ptr_to_string(db_name) {
+        Some(s) => s,
+        None => return string_to_ptr(json!({"error": "Invalid db_name pointer"}).to_string()),
+    };
+
+    let sql_str = match ptr_to_string(sql) {
+        Some(s) => s,
+        None => return string_to_ptr(json!({"error": "Invalid sql pointer"}).to_string()),
+    };
+
+    let context = unsafe { &*ctx };
+
+    // 查找有没有对应数据库的密钥
+    let (db_path, key_hex, salt_hex) = match context.db_map.get(&db_name_str) {
+        Some(data) => data,
+        None => {
+            return string_to_ptr(
+                json!({
+                    "error": format!("Database '{}' not found in decrypted context", db_name_str)
+                })
+                    .to_string(),
+            )
+        }
+    };
+
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return string_to_ptr(json!({"error": format!("Failed to open DB: {}", e)}).to_string())
+        }
+    };
+
+    // 注入微信加密配置并跳过主密钥派生
+    let pragma_key = format!("PRAGMA key = \"x'{}{}'\";", key_hex, salt_hex);
+    let setup_sql = format!(
+        "
+        {};
+        PRAGMA cipher_page_size = 4096;
+        PRAGMA cipher_hmac_algorithm = HMAC_SHA512;
+        PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;
+        ",
+        pragma_key
+    );
+
+    if let Err(e) = conn.execute_batch(&setup_sql) {
+        return string_to_ptr(json!({"error": format!("Crypto setup failed: {}", e)}).to_string());
+    }
+
+    let sql_upper = sql_str.trim().to_uppercase();
+    if sql_upper.starts_with("SELECT") || sql_upper.starts_with("PRAGMA") {
+        let mut stmt = match conn.prepare(&sql_str) {
+            Ok(s) => s,
+            Err(e) => {
+                return string_to_ptr(json!({"error": format!("Prepare failed: {}", e)}).to_string())
+            }
+        };
+
+        let column_names: Vec<String> =
+            stmt.column_names().into_iter().map(String::from).collect();
+
+        let rows_iter = match stmt.query_map([], |row| {
+            let mut map = serde_json::Map::new();
+            for (i, name) in column_names.iter().enumerate() {
+                let val_ref = match row.get_ref(i) {
+                    Ok(v) => v,
+                    Err(_) => rusqlite::types::ValueRef::Null,
+                };
+                // 转换 SQLite 数据类型到 JSON 数据类型
+                let json_val = match val_ref {
+                    rusqlite::types::ValueRef::Null => serde_json::Value::Null,
+                    rusqlite::types::ValueRef::Integer(i) => json!(i),
+                    rusqlite::types::ValueRef::Real(f) => json!(f),
+                    rusqlite::types::ValueRef::Text(t) => {
+                        json!(String::from_utf8_lossy(t))
+                    }
+                    rusqlite::types::ValueRef::Blob(b) => json!(hex::encode(b)),
+                };
+                map.insert(name.clone(), json_val);
+            }
+            Ok(serde_json::Value::Object(map))
+        }) {
+            Ok(r) => r,
+            Err(e) => {
+                return string_to_ptr(json!({"error": format!("Query failed: {}", e)}).to_string())
+            }
+        };
+
+        let mut results = Vec::new();
+        for r in rows_iter.flatten() {
+            results.push(r);
+        }
+
+        string_to_ptr(json!({"success": true, "data": results}).to_string())
+    } else {
+        match conn.execute(&sql_str, []) {
+            Ok(affected) => {
+                string_to_ptr(json!({"success": true, "affected_rows": affected}).to_string())
+            }
+            Err(e) => {
+                string_to_ptr(json!({"error": format!("Execute failed: {}", e)}).to_string())
+            }
+        }
+    }
 }
 
 #[no_mangle]
