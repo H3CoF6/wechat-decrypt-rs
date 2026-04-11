@@ -30,10 +30,13 @@ jobs:
       run: choco install openssl
 
     - name: Set OpenSSL Environment Variables
+      shell: bash
       run: |
-        echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $GITHUB_ENV
-        echo "OPENSSL_INCLUDE_DIR=C:\Program Files\OpenSSL\include" >> $GITHUB_ENV
-        echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib" >> $GITHUB_ENV
+        echo "OPENSSL_DIR=C:/Program Files/OpenSSL" >> $GITHUB_ENV
+        echo "OPENSSL_INCLUDE_DIR=C:/Program Files/OpenSSL/include" >> $GITHUB_ENV
+        echo "OPENSSL_LIB_DIR=C:/Program Files/OpenSSL/lib" >> $GITHUB_ENV
+        # 建议添加静态链接标志，避免运行时缺少 DLL
+        echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
     
     - name: Run Clippy
       run: cargo clippy -- -D warnings
