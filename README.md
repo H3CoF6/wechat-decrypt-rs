@@ -65,6 +65,8 @@ cargo build --release
 - `get_db_keys(...)`: 扫描内存获取所有数据库的解密盐值 (salt) 和密钥 (key)。
 - `get_image_keys()`: 无需任何输入参数，自动计算当前登录账号可能的所有图片 `.dat` 文件解密组合 (AES + XOR)。
 - `batch_decrypt_images(...)`: 传入提取出的密钥，极速并发解密图片目录。
+- `init_db_context()`: **[New]** 一键初始化所有数据库状态，自动扫描内存并关联所有数据库密钥。
+- `exec_sql(...)`: **[New]** 在初始化后的上下文中，对任意微信数据库执行 SQL 查询并获取结果（JSON 格式）。
 
 以上接口统一采用 JSON 字符串传递参数和返回值，适配门槛极低。
 详细的 API 接口说明和 Python 调用示例，请参阅：

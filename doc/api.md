@@ -84,7 +84,54 @@
   }
   ```
 
-### 5. `free_string`
+### 5. `init_db_context`
+
+**说明**：初始化当前登录用户的数据库上下文。该函数会自动寻找当前登录微信的数据库目录，并从内存中扫描解密所有数据库所需的密钥。
+
+- **参数**：无
+- **返回**：`*mut c_void` (一个不透明的上下文指针 `WxDbContext*`)
+- **注意**：如果初始化失败（例如微信未运行或未登录），返回 `NULL`。使用完毕后必须通过 `free_db_context` 释放该指针。
+
+### 6. `free_db_context`
+
+**说明**：释放由 `init_db_context` 创建的数据库上下文。
+
+- **参数**：
+  - `ptr`: `*mut c_void` (`init_db_context` 返回的指针)
+- **返回**：无
+
+### 7. `exec_sql`
+
+**说明**：在指定的数据库上执行任意 SQL 语句。支持 `SELECT` 查询（返回结果集）和 `INSERT/UPDATE/DELETE`（返回受影响行数）。
+
+- **参数**：
+  - `ctx`: `*mut c_void` (有效的 `WxDbContext` 指针)
+  - `db_name`: `*const c_char` (数据库文件名，如 `"MSG0.db"`, `"MicroMsg.db"`, `"Media.db"` 等)
+  - `sql`: `*const c_char` (要执行的 SQL 语句)
+- **返回**：`*mut c_char` (JSON 格式)
+- **JSON 结构 (SELECT)**：
+  ```json
+  {
+      "success": true,
+      "data": [
+          { "column1": "value1", "column2": 123 },
+          ...
+      ]
+  }
+  ```
+- **JSON 结构 (EXEC)**：
+  ```json
+  {
+      "success": true,
+      "affected_rows": 1
+  }
+  ```
+- **JSON 结构 (Error)**：
+  ```json
+  { "error": "错误信息" }
+  ```
+
+### 8. `free_string`
 
 **说明**：释放由 DLL 申请并返回给外部环境的字符串内存。
 

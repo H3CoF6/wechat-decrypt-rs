@@ -27,6 +27,10 @@ wx_dump.get_db_keys.argtypes = [ctypes.c_uint32, ctypes.c_char_p]
 wx_dump.get_image_keys.restype = ctypes.c_void_p
 wx_dump.batch_decrypt_images.restype = ctypes.c_void_p
 wx_dump.batch_decrypt_images.argtypes = [ctypes.c_char_p, ctypes.c_uint8, ctypes.c_char_p, ctypes.c_char_p]
+wx_dump.init_db_context.restype = ctypes.c_void_p
+wx_dump.free_db_context.argtypes = [ctypes.c_void_p]
+wx_dump.exec_sql.restype = ctypes.c_void_p
+wx_dump.exec_sql.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
 wx_dump.free_string.argtypes = [ctypes.c_void_p]
 
 def call_dll_json(func, *args):
@@ -92,6 +96,33 @@ def main():
             out_dir.encode('utf-8')
         )
         print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    print("\n=== 5. 数据库上下文 & SQL 执行示例 ===")
+    # 1. 初始化上下文 (自动获取所有数据库路径和密钥)
+    ctx = wx_dump.init_db_context()
+    if not ctx:
+        print("初始化数据库上下文失败")
+    else:
+        try:
+            # 2. 执行 SQL
+            # 示例：查询 MSG0.db 里面的 Name2Id 表 (不查带哈希的表)
+            db_name = "MSG0.db"
+            sql = "SELECT * FROM Name2Id LIMIT 5"
+            print(f"执行 SQL: [{sql}] 于 {db_name}...")
+            
+            result = call_dll_json(
+                wx_dump.exec_sql,
+                ctx,
+                db_name.encode('utf-8'),
+                sql.encode('utf-8')
+            )
+            print("查询结果:")
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            
+        finally:
+            # 3. 释放上下文
+            wx_dump.free_db_context(ctx)
+            print("已释放数据库上下文")
 
 if __name__ == "__main__":
     main()
