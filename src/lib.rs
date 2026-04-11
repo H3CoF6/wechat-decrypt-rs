@@ -14,9 +14,10 @@ fn string_to_ptr(s: String) -> *mut c_char {
 }
 
 pub struct WxDbContext {
+    pub pid: u32,
+    pub wxid: String,
     pub db_map: HashMap<String, (PathBuf, String, String)>,
 }
-
 fn ptr_to_string(ptr: *const c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
@@ -213,34 +214,87 @@ pub extern "C" fn batch_decrypt_images(
     )
 }
 #[no_mangle]
-pub extern "C" fn init_db_context(pid: u32, db_dir: *const c_char) -> *mut WxDbContext {
-    let dir_str = match ptr_to_string(db_dir) {
-        Some(s) => s,
-        None => return std::ptr::null_mut(),
+pub extern "C" fn init_db_context() -> *mut WxDbContext {
+    let pid = match unsafe { sys::find_wechat_pid() } {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[-] 获取微信 PID 失败: {}", e);
+            return std::ptr::null_mut();
+        }
     };
 
-    let path = PathBuf::from(dir_str);
-    let db_map = db_decrypt::collect_dbs(&path);
+    let data_dir = match config::find_wechat_data_dir_auto() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[-] 获取微信数据目录失败: {}", e);
+            return std::ptr::null_mut();
+        }
+    };
+
+    let user_info = match config::parse_global_config(&data_dir) {
+        Ok(info) => info,
+        Err(e) => {
+            eprintln!("[-] 解析 global_config 失败: {}", e);
+            return std::ptr::null_mut();
+        }
+    };
+    let wxid = user_info.wxid;
+
+    let mut wxid_dir = None;
+    if let Ok(entries) = std::fs::read_dir(&data_dir) {
+        for entry in entries.flatten() {
+            let folder_name = entry.file_name().to_string_lossy().to_string();
+            if folder_name.starts_with(&format!("{}_", wxid)) || folder_name == wxid {
+                wxid_dir = Some(entry.path());
+                break;
+            }
+        }
+    }
+
+    let wxid_dir = match wxid_dir {
+        Some(dir) => dir,
+        None => {
+            eprintln!("[-] 未找到 wxid ({}) 对应的数据目录", wxid);
+            return std::ptr::null_mut();
+        }
+    };
+
+    let mut db_storage = wxid_dir.join("db_storage");
+    if !db_storage.exists() {
+        db_storage = wxid_dir.join("msg").join("db_storage");
+    }
+
+    if !db_storage.exists() {
+        eprintln!("[-] 找不到 db_storage 目录: {:?}", db_storage);
+        return std::ptr::null_mut();
+    }
+
+    let db_map = db_decrypt::collect_dbs(&db_storage);
     if db_map.is_empty() {
+        eprintln!("[-] 在 {:?} 下未找到有效的微信数据库文件", db_storage);
         return std::ptr::null_mut();
     }
 
     let results = match unsafe { db_decrypt::scan_memory(pid, &db_map) } {
         Ok(res) => res,
-        Err(_) => return std::ptr::null_mut(),
+        Err(e) => {
+            eprintln!("[-] 内存扫描密钥失败: {}", e);
+            return std::ptr::null_mut();
+        }
     };
 
     let mut context = WxDbContext {
+        pid,
+        wxid,
         db_map: HashMap::new(),
     };
 
-    // 构建上下文映射关系
     for (salt, raw_key) in results {
         if let Some(infos) = db_map.get(&salt) {
             let key_hex = hex::encode(&raw_key).to_lowercase();
             for info in infos {
                 context.db_map.insert(
-                    info.name.clone(), // e.g. "Msg0.db"
+                    info.name.clone(),
                     (info.filepath.clone(), key_hex.clone(), salt.clone()),
                 );
             }
@@ -249,6 +303,7 @@ pub extern "C" fn init_db_context(pid: u32, db_dir: *const c_char) -> *mut WxDbC
 
     Box::into_raw(Box::new(context))
 }
+
 
 #[no_mangle]
 /// Frees a string allocated by Rust and passed to C.
