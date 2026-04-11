@@ -1,6 +1,6 @@
 [package]
 name = "wx-dump-rs"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 authors = ["H3CoF6"]
 description = "A lightweight and fast WeChat Database & Media Decryptor written in Rust"
