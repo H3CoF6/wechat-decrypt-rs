@@ -25,6 +25,15 @@ jobs:
     
     - name: Rust Cache
       uses: Swatinem/rust-cache@v2
+
+    - name: Install OpenSSL
+      run: choco install openssl
+
+    - name: Set OpenSSL Environment Variables
+      run: |
+        echo "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >> $GITHUB_ENV
+        echo "OPENSSL_INCLUDE_DIR=C:\Program Files\OpenSSL-Win64\include" >> $GITHUB_ENV
+        echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL-Win64\lib" >> $GITHUB_ENV
     
     - name: Run Clippy
       run: cargo clippy -- -D warnings
