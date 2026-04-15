@@ -158,6 +158,27 @@ pub fn parse_global_config(root_path: &Path) -> Result<WeChatUserInfo> {
     }
 }
 
+pub fn list_accounts(data_dir: &Path) -> Result<Vec<String>> {
+    let mut accounts = Vec::new();
+    if !data_dir.exists() {
+        return Ok(accounts);
+    }
+    for entry in fs::read_dir(data_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            let folder_name = entry.file_name().to_string_lossy().to_string();
+            // Accounts usually are wxid_... or just wxid, and they contain db_storage
+            if path.join("db_storage").exists() {
+                accounts.push(folder_name);
+            }
+        }
+    }
+    // Sort to keep it consistent
+    accounts.sort();
+    Ok(accounts)
+}
+
 fn extract_mmkv_string(data: &[u8], key: &str) -> Option<String> {
     let key_bytes = key.as_bytes();
     memchr::memmem::find(data, key_bytes).and_then(|pos| {

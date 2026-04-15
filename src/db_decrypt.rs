@@ -18,7 +18,20 @@ use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Memory::{VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT};
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 
+use tabled::{
+    settings::{object::Columns, style::Style, Color, Modify},
+    Table, Tabled,
+};
+
 type Aes256CbcDec = Decryptor<Aes256>;
+
+#[derive(Tabled)]
+struct ScanResult {
+    #[tabled(rename = "Database")]
+    name: String,
+    #[tabled(rename = "Status")]
+    status: String,
+}
 
 // --- WeChat 4.x Cryptography Constants ---
 const PAGE_SIZE: usize = 4096;
@@ -35,6 +48,11 @@ pub struct DbInfo {
     pub name: String,
     #[serde(skip)]
     pub page1: Vec<u8>,
+}
+
+pub enum DecryptResult {
+    Success,
+    NoKeysFound,
 }
 
 // --- Core Cryptography Logic ---
@@ -255,7 +273,7 @@ pub unsafe fn scan_memory(
     Ok(results)
 }
 
-pub fn dump_and_decrypt(pid: u32, db_storage: &Path, wxid: &str) -> Result<()> {
+pub fn dump_and_decrypt(pid: u32, db_storage: &Path, wxid: &str) -> Result<DecryptResult> {
     log::step(format!(
         "[*] {}",
         style("Building local database list").bold()
@@ -275,21 +293,77 @@ pub fn dump_and_decrypt(pid: u32, db_storage: &Path, wxid: &str) -> Result<()> {
         "[*] {}",
         style("Extracting decryption keys from memory").bold()
     ))?;
-    let keys_map = unsafe { scan_memory(pid, &db_map)? };
-    log::step(format!(
-        "   Extraction complete, retrieved {}/{} keys.",
-        style(keys_map.len()).green(),
-        style(db_map.len()).cyan()
-    ))?;
+
+    let mut keys_map = unsafe { scan_memory(pid, &db_map)? };
 
     if keys_map.is_empty() {
-        bail!("No matching database keys found in memory. Ensure WeChat is logged in!");
+        return Ok(DecryptResult::NoKeysFound);
+    }
+
+    // Task 2: Handle partial keys
+    if keys_map.len() < db_map.len() {
+        loop {
+            let mut scan_results = Vec::new();
+            for (salt, infos) in &db_map {
+                let status = if keys_map.contains_key(salt) {
+                    style("Success").green().to_string()
+                } else {
+                    style("Missing").red().to_string()
+                };
+                for info in infos {
+                    scan_results.push(ScanResult {
+                        name: info.name.clone(),
+                        status: status.clone(),
+                    });
+                }
+            }
+
+            let mut table = Table::new(scan_results);
+            table
+                .with(Style::modern())
+                .with(Modify::new(Columns::last()).with(Color::FG_CYAN));
+
+            cliclack::note(
+                style("Partial keys extracted").yellow().bold(),
+                format!(
+                    "Retrieved {}/{} keys.\n\n{}\n\n{}",
+                    style(keys_map.len()).green(),
+                    style(db_map.len()).cyan(),
+                    table,
+                    style("Tip: Interact with WeChat (click chats, browse contacts, etc.) to help the tool find more keys.\n提示：在微信中随意点击（聊天、通讯录等）有概率帮助程序获取到更多密钥。").dim()
+                )
+            )?;
+
+            let choice = cliclack::select("Missing some keys. What would you like to do?")
+                .item(true, "Rescan memory for more keys", "Wait and scan again")
+                .item(false, "Stop waiting and proceed with current keys", "Proceed with partial results")
+                .interact()?;
+
+            if !choice {
+                break;
+            }
+
+            log::step(style("Rescanning memory...").bold().yellow())?;
+            let new_keys = unsafe { scan_memory(pid, &db_map)? };
+            let old_len = keys_map.len();
+            keys_map.extend(new_keys);
+            
+            if keys_map.len() == db_map.len() {
+                log::step(style("All keys successfully retrieved!").green().bold())?;
+                break;
+            } else if keys_map.len() > old_len {
+                log::step(style(format!("Found {} new keys!", keys_map.len() - old_len)).green())?;
+            } else {
+                log::step(style("No new keys found in this scan.").yellow())?;
+            }
+        }
     }
 
     log::step(format!(
         "[*] {}",
         style("Starting parallel database decryption").bold()
     ))?;
+    // ... rest of the function ...
 
     let out_dir = PathBuf::from("output").join(wxid).join("databases");
     fs::create_dir_all(&out_dir)?;
@@ -366,5 +440,5 @@ pub fn dump_and_decrypt(pid: u32, db_storage: &Path, wxid: &str) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(DecryptResult::Success)
 }
